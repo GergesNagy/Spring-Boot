@@ -1,0 +1,81 @@
+trigger:
+- gerges-test
+
+pool:
+  name: Default
+  vmImage: 'latest'
+
+variables:
+  registry: 'gergesnagy'
+  imageName: 'spring_boot'
+
+stages:
+
+- stage: BuildImage
+  jobs:
+  - job: BuildImage
+    steps:
+    - checkout: self
+    - script: |
+        cd $(Build.SourcesDirectory)
+        echo "Current directory: $(pwd)"
+        docker build -t '$(imageName):$(Build.BuildId)' .
+      displayName: 'Build an image of springboot project'
+
+- stage: PushImage
+  jobs:
+  - job: PushImage
+    steps:
+    - checkout: self
+    - task: Docker@2
+      inputs:
+        containerRegistry: 'azurePipeline_docker'
+        repository: '$(registry)/$(imageName)'
+        command: 'push'
+        tags: |
+          $(Build.BuildId)
+
+- stage: PullImage
+  jobs:
+  - job: PullImage
+    steps:
+    - checkout: self
+    - task: Docker@2
+      inputs:
+        containerRegistry: 'azurePipeline_docker'
+        repository: '$(registry)/$(imageName)'
+        command: 'pull'
+        tags: |
+          $(Build.BuildId)
+
+- stage: DeployToK8s
+  jobs:
+  - deployment: Deploy
+    environment: 'aws-k8s-cluster'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+          - task: Kubernetes@1
+            inputs:
+              connectionType: 'Kubernetes Service Connection'
+              kubernetesServiceEndpoint: 'azurePipeline_EKS'
+              namespace: 'default'
+              command: 'apply'
+              useConfigurationFile: true
+              configuration: 'k8s/deployment.yaml'
+
+- stage: CreateIngress
+  jobs:
+  - job: CreateIngress
+    steps:
+    - checkout: self
+    - task: Kubernetes@1
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceEndpoint: 'azurePipeline_EKS'
+        namespace: 'default'
+        command: 'apply'
+        useConfigurationFile: true
+        configuration: 'k8s/ingress.yaml'
